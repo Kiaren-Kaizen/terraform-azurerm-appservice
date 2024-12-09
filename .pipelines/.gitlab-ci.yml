@@ -1,152 +1,116 @@
-# Workflow image
-image:
-  name: hashicorp/terraform:0.13.2
-  entrypoint:
-    - "/usr/bin/env"
-    - "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+default:
+  tags:
+    - platform
 
-# Workflow variables
+include: .pipelines/base.gitlab-ci.yml
+
 variables:
-  # Provides a filename for the Terraform plan file
-  PLAN: plan.tfplan
-  # Provides a filename for the GitLab plan report attached to the merge request
-  JSON_PLAN_FILE: tfplan.json
-  # Provides a clue to Terraform that it is being run in a CI pipeline
-  TF_IN_AUTOMATION: "true"
-  # Environment Name (defaults to "prod")
-  ENVIRONMENT_NAME: "prod"
+  TF_WORKSPACE: $TF_CLOUD_WORKSPACE
+  TF_DIRECTORY: $CI_PROJECT_DIR
+  TF_API_TOKEN: $TF_API_TOKEN
+  TF_CLOUD_ORGANIZATION: $TF_CLOUD_ORGANIZATION
+  
+  PROJECT_PIPELINE_NAME: "Default pipeline name"
 
-# Cache files between jobs
-cache:
-  key: "$CI_COMMIT_SHA"
-  # Globally caches the .terraform folder across each job in this workflow
-  paths:
-    - .terraform
-
-# Provides the Terraform version and reconfigures the backend state during init
-# Note: The leading dot (.) ignores this as a "job" while the ampersand (&) is an Anchor declaring the script as a variable to use elsewhere
-.terraform-ver-init: &terraform-ver-init
-  - terraform version
-  # Provides git the ability to access other private projects for use as remote Terraform modules
-  - terraform init -backend-config="token=$TFE_TOKEN"
-
-# Provides a list of stages for this GitLab workflow
 stages:
-  - validate
-  - plan
-  - apply
+  - build
+  - test
+  - sast
+  - secret-detection
+  - container-scanning
+  - dast
+  - deploy
+  - cleanup
 
-# Job: Validate | Stage: Validate
-# Purpose: Validate the Terraform configuration files and check the format (fmt) as a sort of linting test
-validate:
-  stage: validate
-  before_script:
-    - *terraform-ver-init
-  script:
-    - terraform validate
-    # Job will fail with exit code 3 if formatting changes are required
-    - terraform fmt -list=true -write=false -diff=true -check=true -recursive
-  only:
-    changes:
-      - "*.tf"
-      - "**/*.tf"
+workflow:
+  name: "$PROJECT_PIPELINE_NAME"
+  rules:
+    # Default branch (e.g., 'main') - Non-speculative apply
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+      when: always
+      variables:
+        PROJECT_PIPELINE_NAME: "$CI_DEFAULT_BRANCH pipeline"
+        PLAN_ONLY: "false"
+        SPECULATIVE: "false"
+        SAVE_PLAN: "false"
+        IS_DESTROY: "false"
+    # Merge request (PR) - Plan only
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+      variables:
+        PROJECT_PIPELINE_NAME: "Merge Request pipeline: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+        PLAN_ONLY: "true"
+        SPECULATIVE: "true"
+        SAVE_PLAN: "false"
+        IS_DESTROY: "false"
 
-# Job: Checkov | Stage: Validate
-# Purpose: Validate the Terraform configuration by applying security policies provided by Checkov
-checkov:
-  image:
-    name: bridgecrew/checkov:latest
-    entrypoint:
-      - "/usr/bin/env"
-      - "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  stage: validate
-  script:
-    - checkov -d .
-  allow_failure: true
+# Upload configuration for the current workspace
+upload_configuration:
+  stage: ".pre"
+  extends: .tfc:upload_configuration
 
-# Job: tflint | Stage: Validate
-# Purpose: Lint the Terraform configuration using tflint (only works with Terraform 0.12 code)
-tflint:
-  image:
-    name: wata727/tflint:latest
-    entrypoint:
-      - "/usr/bin/env"
-      - "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  stage: validate
-  script:
-    - tflint -v
-    - tflint
-  allow_failure: true
+# Create a Terraform run (plan or apply depending on the context)
+create_run:
+  stage: "build"
+  extends: .tfc:create_run
+  variables:
+    MESSAGE: "LGTM"
 
-# Job: Test Plan | Stage: Plan
-# Purpose: Show the proposed changes included in the merge request and include details in a comment
-test plan:
-  stage: plan
-  before_script:
-    - *terraform-ver-init
-  script:
-    - apk add --update jq
-    - alias convert_report="jq -r '([.resource_changes[]?.change.actions?]|flatten)|{\"create\":(map(select(.==\"create\"))|length),\"update\":(map(select(.==\"update\"))|length),\"delete\":(map(select(.==\"delete\"))|length)}'"
-    - terraform plan -out=$PLAN -input=false -var="email-address=$EMAIL_ADDRESS" -var="notification-threshold=$NOTIFICATION_THRESHOLD" -var="budget-amount=$BUDGET_AMOUNT"
-    - "terraform show -json $PLAN | convert_report > $JSON_PLAN_FILE"
+# SAST Security Scanning
+sast:
+  stage: sast
+  extends: .tfc:plan_output
   artifacts:
-    name: plan
-    paths:
-      - $PLAN
     reports:
-      terraform: $JSON_PLAN_FILE
-    expire_in: 7 days
-  only:
-    - merge_request
+      sast: gl-sast-report.json
 
-# Job: Final Plan | Stage: Plan
-# Purpose: Capture the new Terraform configuration settings in main branch as a plan file
-final plan:
-  stage: plan
-  before_script:
-    - *terraform-ver-init
-  script:
-    - terraform plan -out=$PLAN -input=false -var="email-address=$EMAIL_ADDRESS" -var="notification-threshold=$NOTIFICATION_THRESHOLD" -var="budget-amount=$BUDGET_AMOUNT"
+# Secret Detection Scanning
+secret_detection:
+  stage: secret-detection
+  extends: .tfc:plan_output
   artifacts:
-    name: plan
-    paths:
-      - $PLAN
-    expire_in: 7 days
-  only:
-    - main
-  # This ensures that only one instance of this job can run in case multiple workflows are launched in parallel
-  resource_group: $ENVIRONMENT_NAME
+    reports:
+      secret_detection: gl-secret-detection-report.json
 
-# Job: Apply | Stage: Apply
-# Purpose: Apply the new Terraform configuration settings found in the plan file
-apply:
-  stage: apply
-  before_script:
-    - *terraform-ver-init
-  environment:
-    name: $ENVIRONMENT_NAME
-    on_stop: destroy
-  script:
-    - terraform apply -input=false -auto-approve $PLAN
-  dependencies:
-    - final plan
-  only:
-    - main
-  # This ensures that only one instance of this job can run in case multiple workflows are launched in parallel
-  resource_group: $ENVIRONMENT_NAME
+# Container Scanning
+container_scanning:
+  stage: container-scanning
+  extends: .tfc:plan_output
+  artifacts:
+    reports:
+      container_scanning: gl-container-scanning-report.json
 
-# Job: Destroy | Stage: Apply
-# Purpose: Stop and destroy the resources configured by Terraform
-destroy:
-  stage: apply
-  before_script:
-    - *terraform-ver-init
+# DAST Security Scanning
+dast:
+  stage: dast
+  extends: .tfc:plan_output
+  artifacts:
+    reports:
+      dast: gl-dast-report.json
+
+# Apply Terraform run - Only on the default branch after a successful plan
+apply_run:
+  stage: "deploy"
+  extends: .tfc:apply_run
+  rules:
+    # Only allow apply on the default branch
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+      when: on_success
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # Do not apply for merge requests
+      when: never
+
+# Plan Output - Runs on merge requests (PRs)
+plan_output:
+  stage: "deploy"
+  extends: .tfc:plan_output
+  rules:
+    # Run plan output only for merge requests
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Check run status - Only runs for merge requests
+check_run_status:
+  stage: ".post"
   script:
-    - terraform destroy -auto-approve -var="email-address=$EMAIL_ADDRESS" -var="notification-threshold=$NOTIFICATION_THRESHOLD" -var="budget-amount=$BUDGET_AMOUNT"
-  when: manual
-  only:
-    - main
-  environment:
-    name: $ENVIRONMENT_NAME
-    action: stop
-  retry: 2
+    - if [ "$run_status" != "planned_and_finished" ]; then exit 1; fi;
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
