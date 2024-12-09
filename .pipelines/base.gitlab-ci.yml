@@ -1,0 +1,85 @@
+
+default:
+  image: hashicorp/tfci:v1.3.1
+
+# Create and upload a configuration version to terraform-cloud.variables:
+# exported dotenv variables that can be referenced in later jobs:
+#  - status: one of "Success", "Error", "Timeout", "Noop". Noop means no operation.
+#  - configuration_version_id
+.tfc:upload_configuration:
+  variables:
+    SPECULATIVE: false
+  script:
+    - echo "Workspace is $TF_WORKSPACE"
+    - echo "Org is $TF_CLOUD_ORGANIZATION"
+    - echo "Dir is $TF_DIRECTORY"
+    - tfci -hostname=$TF_CLOUD_HOSTNAME  -token=$TF_API_TOKEN -organization=$TF_CLOUD_ORGANIZATION upload -workspace=$TF_WORKSPACE -speculative=$SPECULATIVE -directory=$TF_DIRECTORY
+  artifacts:
+    reports:
+      dotenv: .env
+
+# Create a HCP Terraform run
+# exported dotenv variables that can be referenced in later jobs:
+#  - status: one of "Success", "Error", "Timeout", "Noop". Noop means no operation.
+#  - run_id
+#  - plan_id
+.tfc:create_run:
+  variables:
+    CONFIGURATION_VERSION_ID: $configuration_version_id
+    MESSAGE: "Base template message. Override this"
+  script:
+    - tfci -hostname=$TF_CLOUD_HOSTNAME  -token=$TF_API_TOKEN -organization=$TF_CLOUD_ORGANIZATION run create -workspace=$TF_WORKSPACE -configuration_version=$CONFIGURATION_VERSION_ID -message="$MESSAGE" -plan-only=$PLAN_ONLY -save-plan=$SAVE_PLAN -is-destroy=$IS_DESTROY -target=$TARGET
+  artifacts:
+    reports:
+      dotenv: .env
+
+# Apply a HCP Terraform run
+.tfc:apply_run:
+  variables:
+    RUN_ID: $run_id
+    COMMENT: "Base template comment. Override this"
+  script:
+    - tfci -hostname=$TF_CLOUD_HOSTNAME  -token=$TF_API_TOKEN -organization=$TF_CLOUD_ORGANIZATION run apply -run=$RUN_ID -comment="$COMMENT"
+  artifacts:
+    reports:
+      dotenv: .env
+
+# Output Plan details
+# exported dotenv variables that can be referenced in later jobs:
+#  - status: One of "Success", "Error", "Timeout", "Noop". Noop means no operation.
+#  - add: Resources to add
+#  - change: Resources to change
+#  - destroy: Resources to destroy
+.tfc:plan_output:
+  variables:
+    PLAN_ID: $plan_id
+  script:
+    - tfci -hostname=$TF_CLOUD_HOSTNAME  -token=$TF_API_TOKEN -organization=$TF_CLOUD_ORGANIZATION plan output -plan=$PLAN_ID
+  artifacts:
+    reports:
+      dotenv: .env
+
+# Workspace output
+# Returns JSON array of the latest state-version output(s) for a given HCP Terraform workspace
+# The array is put in a file named Output.json that can then be consumed or processed in later stage
+# exported dotenv variables that can be referenced in later jobs:
+#  - status: One of "Success", "Error", "Timeout", "Noop". Noop means no operation.
+.tfc:workspace_output:
+  script:
+    - tfci -hostname=$TF_CLOUD_HOSTNAME --token=$TF_API_TOKEN -organization=$TF_CLOUD_ORGANIZATION  workspace output list -workspace=$TF_WORKSPACE > "output.json"
+  artifacts:
+    reports:
+      dotenv: .env
+    paths:
+      - "output.json"
+
+# tfc:comment_on_merge_request is a hidden job that posts a comment to a Gitlab merge request for which the pipeline is being run.
+# GITLAB_API_TOKEN needs to be defined to use this job. Please refer: https://docs.gitlab.com/ee/user/project/settings/project_access_tokens.html
+.tfc:comment_on_merge_request:
+  image: alpine/curl
+  variables:
+    MR_COMMENT: |
+      Plan: ${add} to add, ${change} to change, ${destroy} to destroy.
+      [HCP Terraform Plan](${run_link})
+  script:
+    - 'curl --fail-with-body --request POST --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" "https://gitlab.com/api/v4/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" --data-urlencode "body=$MR_COMMENT"'
