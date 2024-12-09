@@ -44,5 +44,5 @@ output "web_server_farm_reserved" {
 
 output "ase_id" {
   description = "The ID of the App Service Environment"
-  value    = azurerm_app_service_environment_v3.this[0].id 
+  value       = azurerm_app_service_environment_v3.this[0].id
 }

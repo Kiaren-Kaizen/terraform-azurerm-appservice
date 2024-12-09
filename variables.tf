@@ -46,18 +46,19 @@ variable "hosting" {
   })
   description = <<DESCRIPTION
   A map of App Service Plan settings. The map must contain the following keys:
-  - `sku_name` - The SKU name of the App Service Plan.
-  - `maximum_elastic_worker_count` - (Optional) The maximum number of workers that can be allocated to this App Service Plan.
-  - `worker_count` - (Optional) The number of workers to allocate to this App Service Plan.
-  - `per_site_scaling_enabled` - (Optional) Should per-site scaling be enabled for the App Service Plan.
-  - `zone_balancing_enabled` - (Optional) Should zone balancing be enabled for the App Service Plan.
-  - `app_service_environment_v3` The App Service Environment V3 settings for the App Service Plan.
- - `vnet_id` - The ID of the VNet to use for the App Service Environment V3. Must have space large enough to accommodate a 24-bit subnet or larger.
-  - `cluster_setting` - (Optional) A map of cluster settings for the App Service Environment V3. 
-  - `dedicated_host_count` - (Optional) The number of dedicated hosts to use for the App Service Environment V3.
-  - `remote_debugging_enabled` - (Optional) Should remote debugging be enabled for the App Service Environment V3.
-  - `zone_redundant` - (Optional) Should the App Service Environment V3 be zone redundant.
-  - `internal_load_balancing_mode` - (Optional) The internal load balancing mode for the App Service Environment V3. Possible values are `None`, `Web`, `Publishing`.
+  - `sever_farm` - The App Service Plan settings for a server farm. The map must contain the following keys:
+    - `sku_name` - The SKU name of the App Service Plan.
+    - `maximum_elastic_worker_count` - (Optional) The maximum number of workers that can be allocated to this App Service Plan.
+    - `worker_count` - (Optional) The number of workers to allocate to this App Service Plan.
+    - `per_site_scaling_enabled` - (Optional) Should per-site scaling be enabled for the App Service Plan.
+    - `zone_balancing_enabled` - (Optional) Should zone balancing be enabled for the App Service Plan.
+  - `ase` - The App Service Plan settings for an App Service Environment V3. The map must contain the following keys:
+    - `subnet_id` - The ID of the subnet to use for the App Service Environment V3.
+    - `cluster_setting` - A map of cluster settings for the App Service Environment V3.
+    - `dedicated_host_count` - (Optional) The number of dedicated hosts to use for the App Service Environment V3.
+    - `remote_debugging_enabled` - (Optional) Should remote debugging be enabled for the App Service Environment V3.
+    - `zone_redundant` - (Optional) Should the App Service Environment V3 be zone redundant.
+    - `internal_load_balancing_mode` - (Optional) The internal load balancing mode for the App Service Environment V3.
   DESCRIPTION
   validation {
     condition = (
@@ -170,6 +171,76 @@ variable "webapps" {
       }))
     })
   }))
+
+  description = <<DESCRIPTION
+  A map of Web App settings. The map must contain the following
+  keys:
+  - `name` - The name of the Web App.
+  - `enabled` - (Optional) Should the Web App be enabled.
+  - `site_config` - The site configuration settings for the Web App. The map must contain the following keys:
+    - `always_on` - (Optional) Should the Web App always be on.
+    - `api_definition_url` - (Optional) The URL of the API definition.
+    - `api_management_api_id` - (Optional) The API Management API ID.
+    - `app_command_line` - (Optional) The command line to launch the application.
+    - `auto_heal_setting` - (Optional) The auto-heal settings for the Web App. The map must contain the following keys:
+      - `action` - The action settings for the auto-heal. The map must contain the following keys:
+        - `action_type` - The type of action to take.
+        - `custom_action` - (Optional) The custom action to take.
+        - `min_process_execution_time` - The minimum process execution time.
+      - `triggers` - The triggers for the auto-heal. The map must contain the following keys:
+        - `private_memory_kb` - (Optional) The private memory in KB.
+        - `requests` - (Optional) The requests trigger settings. The map must contain the following keys:
+          - `count` - The number of requests.
+          - `time_interval` - The time interval.
+        - `slow_requests` - (Optional) The slow requests trigger settings. The map must contain the following keys:
+          - `time_taken` - The time taken.
+          - `path` - The path.
+          - `count` - The number of requests.
+          - `time_interval` - The time interval.
+        - `status_codes` - (Optional) The status codes trigger settings. The map must contain the following keys:
+          - `status` - The status code.
+          - `sub_status` - (Optional) The sub status code.
+          - `win32_status` - (Optional) The Win32 status code.
+          - `count` - The number of requests.
+          - `time_interval` - The time interval.
+    - `container_registry_use_managed_identity` - (Optional) Should the container registry use a managed identity.
+    - `cors` - (Optional) The CORS settings for the Web App. The map must contain the following keys:
+      - `allowed_origins` - The allowed origins.
+      - `support_credentials` - (Optional) Should credentials be supported.
+    - `default_documents` - (Optional) The default documents.
+    - `ftps_state` - (Optional) The FTPS state.
+    - `health_check_path` - (Optional) The health check path.
+    - `health_check_eviction_time_in_min` - (Optional) The health check eviction time in minutes.
+    - `http2_enabled` - (Optional) Should HTTP2 be enabled.
+    - `ip_restriction` - (Optional) The IP restriction settings. The map must contain the following keys:
+      - `ip_address` - The IP address.
+      - `action` - The action.
+      - `priority` - The priority.
+      - `name` - (Optional) The name.
+    - `load_balancing_mode` - (Optional) The load balancing mode.
+    - `scm_ip_restriction` - (Optional) The SCM IP restriction settings. The map must contain the following keys
+      - `ip_address` - The IP address.
+      - `action` - The action.
+      - `priority` - The priority.
+      - `name` - (Optional) The name.
+    - `vnet_route_all_enabled` - (Optional) Should VNET route all be enabled.
+    - `worker_count` - (Optional) The worker count.
+  - `app_settings` - (Optional) The application settings for the Web App.
+  - `connection_strings` - (Optional) The connection strings for the Web App. The map must contain the following keys:
+    - `name` - The name of the connection string.
+    - `type` - The type of the connection string.
+    - `value` - The value of the connection string.
+  - `client_certificate_enabled` - (Optional) Should client certificates be enabled.
+  - `ftp_publish_basic_authentication_enabled` - (Optional) Should FTP publish basic authentication be enabled.
+  - `https_only` - (Optional) Should HTTPS only be enabled.
+  - `auth_settings` - The authentication settings for the Web App. The map must contain the following keys:
+    - `enabled` - Should authentication be enabled.
+    - `active_directory` - The Active Directory settings for the Web App. The map must contain the following keys:
+      - `client_id` - The client ID.
+      - `allowed_audiences` - (Optional) The allowed audiences.
+      - `client_secret` - (Optional) The client secret.
+      - `client_secret_setting_name` - (Optional) The client secret setting name.
+  DESCRIPTION
   # Validation for load_balancing_mode
   validation {
     condition = alltrue([
